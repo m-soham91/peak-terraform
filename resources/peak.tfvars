@@ -1,0 +1,11 @@
+############# TFvars for peak ##################
+peak_cidr                  = "192.168.1.0/24"
+peak_private_subnets       = "192.168.1.0/25"
+peak_public_subnets        = "192.168.1.128/25"
+peak_name                  = "peak"
+peak_tag_purpose           = "peak"
+peak_image                 = "ami-09892006daa616946"
+peak_root_volume_size      = "35"
+peak_root_volume_type      = "standard"
+peak_type                  = "t2.micro"
+peak_region                = "us-west-1"
