@@ -208,36 +208,56 @@ resource "aws_instance" "private_machine" {
   }
 }
 #--------------------------------------------------------------
-# AWS ELB
+# AWS NLB
 #--------------------------------------------------------------
-resource "aws_elb" "peak-test" {
-  name                        = "peak-test"
-  idle_timeout                = 300
-  connection_draining         = true
-  connection_draining_timeout = 60
-  security_groups = [aws_security_group.peak.id]
-  subnets = [aws_subnet.public_subnet.id]
-  listener {
-    instance_port     = 80
-    instance_protocol = "http"
-    lb_port           = 80
-    lb_protocol       = "http"
-  }
-  health_check {
-    healthy_threshold   = 2
-    unhealthy_threshold = 5
-    timeout             = 3
-    target              = "HTTP:80/"
-    interval            = 15
-  }
+######### NETWORK LOAD BALANCER CONFIGURATION #########
+
+resource "aws_lb" "peak" {
+  name               = "peak-${var.env}"
+  load_balancer_type = "network"
+  idle_timeout       = 300
+
+  subnets = "${public_subnets.id}"
+
+  internal = true
   tags = {
-    Name        = "${var.name}-elb"
+    Name        = "peak-${var.env}"
+    Group       = "${var.tag_group}"
+    Environment = "${var.env}"
+    Datacenter  = "${var.region}"
     Purpose     = "${var.tag_purpose}"
+    datadog     = "${var.peak_monitoring == "true" ? "monitored" : "not_monitored"}"
+    Objective   = "${var.tag_objective}"
+    Continuity  = "${var.tag_continuity}"
+    Function    = "${var.tag_function}"
+    Team        = "${var.tag_team}"
+    BU          = "${var.tag_bu}"
   }
 }
-resource "aws_elb_attachment" "peak-test-private-instance_attachment" {
-  elb      = aws_elb.peak-test.id
-  instance = aws_instance.private_machine.id
+
+
+data "aws_acm_certificate" "nlb_wildcard_info" {
+  domain   = "*.peak.com"
+  statuses = ["ISSUED"]
+}
+resource "aws_lb_listener" "peak" {
+  load_balancer_arn = aws_lb.peak.arn
+  port              = "443"
+  protocol          = "TLS"
+  certificate_arn   = "${data.aws_acm_certificate.nlb_wildcard_info.arn}"
+  ssl_policy        = "ELBSecurityPolicy-FS-1-2-Res-2020-10"
+  alpn_policy       = "HTTP2Optional"
+  default_action {
+    type             = "forward"
+    target_group_arn = aws_alb_target_group.internal_alb_target_peak.arn
+  }
+}
+resource "aws_route53_record" "peak-lb-dns" {
+  zone_id = "${var.root_zone_id}"
+  name    = "peak-${var.env}.${var.services_domain}"
+  type    = "CNAME"
+  ttl     = "300"
+  records = ["${aws_lb.peak.dns_name}"]
 }
 #--------------------------------------------------------------
 # AWS ASG
@@ -248,7 +268,7 @@ resource "aws_autoscaling_group" "peak" {
   force_delete        = true
   max_size            = "${var.asg_max}"
   min_size            = "${var.asg_min}"
-  vpc_zone_identifier = "${split(",", var.subnet_id)}"
+  vpc_zone_identifier = "${public_subnets.id}"
   termination_policies = ["OldestInstance"]
   mixed_instances_policy {
     instances_distribution {
@@ -308,12 +328,7 @@ resource "aws_autoscaling_group" "peak" {
   }
   tag {
     key                 = "datadog"
-    value               = "${var.nd_monitoring_asg_worker == "true" ? "monitored" : "not_monitored"}"
-    propagate_at_launch = true
-  }
-  tag {
-    key                 = "NDType"
-    value               = "worker"
+    value               = "${var.peak_monitoring_asg_worker == "true" ? "monitored" : "not_monitored"}"
     propagate_at_launch = true
   }
   tag {
@@ -386,8 +401,7 @@ resource "aws_launch_template" "peak" {
       Function    = "${var.tag_function}"
       Team        = "${var.tag_team}"
       BU          = "${var.tag_bu}"
-      datadog     = "${var.nd_monitoring_asg_worker == "true" ? "monitored" : "not_monitored"}"
-      NDType      = "worker"
+      datadog     = "${var.peak_monitoring_asg_worker == "true" ? "monitored" : "not_monitored"}"
       Datacenter  = "${var.region}"
     }
   }
